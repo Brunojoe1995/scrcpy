@@ -10,6 +10,7 @@ import com.genymobile.scrcpy.wrappers.ServiceManager;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.os.Build;
 import android.view.Surface;
 
 public class NewDisplayCapture extends SurfaceCapture {
@@ -84,13 +85,17 @@ public class NewDisplayCapture extends SurfaceCapture {
                     | VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH
                     | VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT
                     | VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL
-                    | VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS
-                    | VIRTUAL_DISPLAY_FLAG_TRUSTED
-                    | VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP
-                    | VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED
-                    | VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED
-                    | VIRTUAL_DISPLAY_FLAG_OWN_FOCUS
-                    | VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP;
+                    | VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                flags |= VIRTUAL_DISPLAY_FLAG_TRUSTED
+                        | VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP
+                        | VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED
+                        | VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                     flags |= VIRTUAL_DISPLAY_FLAG_OWN_FOCUS
+                             | VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP;
+                }
+            }
             virtualDisplay = ServiceManager.getDisplayManager()
                     .createNewVirtualDisplay("scrcpy", size.getWidth(), size.getHeight(), dpi, surface, flags);
             virtualDisplayId = virtualDisplay.getDisplay().getDisplayId();
