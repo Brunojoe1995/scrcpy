@@ -2,6 +2,7 @@ package com.genymobile.scrcpy.device;
 
 import com.genymobile.scrcpy.FakeContext;
 import com.genymobile.scrcpy.util.Ln;
+import com.genymobile.scrcpy.wrappers.ActivityManager;
 import com.genymobile.scrcpy.wrappers.ClipboardManager;
 import com.genymobile.scrcpy.wrappers.DisplayControl;
 import com.genymobile.scrcpy.wrappers.InputManager;
@@ -10,6 +11,9 @@ import com.genymobile.scrcpy.wrappers.SurfaceControl;
 import com.genymobile.scrcpy.wrappers.WindowManager;
 
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
+import android.app.ActivityOptions;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -21,7 +25,9 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 public final class Device {
 
@@ -213,11 +219,71 @@ public final class Device {
         List<DeviceApp> apps = new ArrayList<>();
         PackageManager pm = FakeContext.get().getPackageManager();
         for (ApplicationInfo appInfo : pm.getInstalledApplications(PackageManager.GET_META_DATA)) {
-            String name = appInfo.loadLabel(pm).toString();
-            boolean system = (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
-            apps.add(new DeviceApp(appInfo.packageName, name, system, appInfo.enabled));
+            apps.add(toApp(pm, appInfo));
         }
 
         return apps;
     }
+
+    private static DeviceApp toApp(PackageManager pm, ApplicationInfo appInfo) {
+        String name = appInfo.loadLabel(pm).toString();
+        boolean system = (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+        return new DeviceApp(appInfo.packageName, name, system, appInfo.enabled);
+    }
+
+    @SuppressLint("QueryPermissionsNeeded")
+    public static List<DeviceApp> findApps(String name) {
+        PackageManager pm = FakeContext.get().getPackageManager();
+        List<ApplicationInfo> list = pm.getInstalledApplications(PackageManager.GET_META_DATA);
+
+        DeviceApp app = findByPackageName(pm, list, name);
+        if (app != null) {
+            return Collections.singletonList(app);
+        }
+
+        return findStartingByName(pm, list, name);
+    }
+
+    private static DeviceApp findByPackageName(PackageManager pm, List<ApplicationInfo> list, String packageName) {
+        for (ApplicationInfo appInfo : list) {
+            if (packageName.equals(appInfo.packageName)) {
+                return toApp(pm, appInfo);
+            }
+        }
+
+        return null;
+    }
+
+    private static List<DeviceApp> findStartingByName(PackageManager pm, List<ApplicationInfo> list, String searchName) {
+        List<DeviceApp> result = new ArrayList<>();
+        searchName = searchName.toLowerCase(Locale.getDefault());
+
+        for (ApplicationInfo appInfo : list) {
+            String name = appInfo.loadLabel(pm).toString();
+            if (name.toLowerCase(Locale.getDefault()).startsWith(searchName)) {
+                boolean system = (appInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+                result.add(new DeviceApp(appInfo.packageName, name, system, appInfo.enabled));
+            }
+        }
+
+        return result;
+    }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    public static void startApp(String packageName, int displayId) {
+        Intent launchIntent = FakeContext.get().getPackageManager().getLaunchIntentForPackage(packageName);
+        if (launchIntent == null) {
+            Ln.w("Cannot create launch intent for app " + packageName);
+            return;
+        }
+
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+        ActivityOptions launchOptions = ActivityOptions.makeBasic();
+        launchOptions.setLaunchDisplayId(displayId);
+
+        ActivityManager am = ServiceManager.getActivityManager();
+        am.startActivity(launchIntent, launchOptions.toBundle());
+    }
+
 }

@@ -3,9 +3,11 @@ package com.genymobile.scrcpy.control;
 import com.genymobile.scrcpy.AsyncProcessor;
 import com.genymobile.scrcpy.CleanUp;
 import com.genymobile.scrcpy.device.Device;
+import com.genymobile.scrcpy.device.DeviceApp;
 import com.genymobile.scrcpy.device.Point;
 import com.genymobile.scrcpy.device.Position;
 import com.genymobile.scrcpy.util.Ln;
+import com.genymobile.scrcpy.util.LogUtils;
 import com.genymobile.scrcpy.video.VirtualDisplayListener;
 import com.genymobile.scrcpy.wrappers.ClipboardManager;
 import com.genymobile.scrcpy.wrappers.InputManager;
@@ -21,6 +23,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -78,6 +81,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private final AtomicBoolean isSettingClipboard = new AtomicBoolean();
 
     private final AtomicReference<DisplayData> displayData = new AtomicReference<>();
+    private final Object displayDataAvailable = new Object(); // condition variable
 
     private long lastTouchDown;
     private final PointersState pointersState = new PointersState();
@@ -128,7 +132,12 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     @Override
     public void onNewVirtualDisplay(int virtualDisplayId, PositionMapper positionMapper) {
         DisplayData data = new DisplayData(virtualDisplayId, positionMapper);
-        this.displayData.set(data);
+        DisplayData old = this.displayData.getAndSet(data);
+        if (old == null) {
+            synchronized (displayDataAvailable) {
+                displayDataAvailable.notify();
+            }
+        }
     }
 
     private UhidManager getUhidManager() {
@@ -286,6 +295,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
                 break;
             case ControlMessage.TYPE_OPEN_HARD_KEYBOARD_SETTINGS:
                 openHardKeyboardSettings();
+                break;
+            case ControlMessage.TYPE_START_APP:
+                startApp(msg.getText());
                 break;
             default:
                 // do nothing
@@ -569,5 +581,67 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         }
 
         return data.virtualDisplayId;
+    }
+
+    private void startApp(String name) {
+        List<DeviceApp> apps = Device.findApps(name);
+        if (apps.isEmpty()) {
+            Ln.w("No app found for name \"" + name + "\"");
+            return;
+        }
+
+        if (apps.size() > 1) {
+            String title = "No unique app found for name \"" + name + "\":";
+            Ln.w(LogUtils.buildAppListMessage(title, apps));
+            return;
+        }
+
+        DeviceApp app = apps.get(0);
+        int startAppDisplayId = getStartAppDisplayId();
+        if (startAppDisplayId == Device.DISPLAY_ID_NONE) {
+            Ln.e("No known display id to start app \"" + name + "\"");
+            return;
+        }
+
+        Ln.i("Starting app \"" + app.getName() + "\" [" + app.getPackageName() + "] on display " + startAppDisplayId + "...");
+        Device.startApp(app.getPackageName(), startAppDisplayId);
+    }
+
+    private int getStartAppDisplayId() {
+        if (displayId != Device.DISPLAY_ID_NONE) {
+            return displayId;
+        }
+
+        // Mirroring a new virtual display id (using --new-display-id feature)
+        try {
+            // Wait for at most 1 second until a virtual display id is known
+            DisplayData data = waitDisplayData(1000);
+            if (data != null) {
+                return data.virtualDisplayId;
+            }
+        } catch (InterruptedException e) {
+            // do nothing
+        }
+
+        // No display id available
+        return Device.DISPLAY_ID_NONE;
+    }
+
+    private DisplayData waitDisplayData(long timeoutMillis) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+
+        synchronized (displayDataAvailable) {
+            DisplayData data = displayData.get();
+            while (data == null) {
+                long timeout = deadline - System.currentTimeMillis();
+                if (timeout < 0) {
+                    return null;
+                }
+                displayDataAvailable.wait(timeout);
+                data = displayData.get();
+            }
+
+            return data;
+        }
     }
 }
